@@ -1,0 +1,76 @@
+const express = require('express');
+const axios = require('axios');
+const ffmpeg = require('fluent-ffmpeg');
+const app = express();
+const port = process.env.PORT || 3000;
+
+// Soundcloud API client ID
+const SOUNDCLOUD_CLIENT_ID = 'YOUR_SOUNDCLOUD_CLIENT_ID';
+
+// Function to search for tracks by artist name
+async function searchTracksByArtist(artistName) {
+  try {
+    const response = await axios.get(`https://api.soundcloud.com/search`, {
+      params: {
+        q: artistName,
+        client_id: SOUNDCLOUD_CLIENT_ID,
+        limit: 10, // Limit the number of results
+        filter: 'track',
+      },
+    });
+    return response.data.results;
+  } catch (error) {
+    console.error('Error searching for tracks:', error);
+    return [];
+  }
+}
+
+// Function to fetch and process a single track
+async function fetchAndProcessTrack(trackUrl) {
+  try {
+    const response = await axios.get(trackUrl, { responseType: 'arraybuffer' });
+    const audioBuffer = response.data;
+
+    const outputPath = 'output.mp3';
+    return new Promise((resolve, reject) => {
+      ffmpeg(audioBuffer)
+        .output(outputPath)
+        .on('end', () => resolve(outputPath))
+        .on('error', (err) => reject(err));
+    });
+  } catch (error) {
+    console.error('Error fetching or processing track:', error);
+    return null;
+  }
+}
+
+app.get('/rip', async (req, res) => {
+  try {
+    const artistName = req.query.artist;
+    if (!artistName) {
+      return res.status(400).send('Artist name parameter is required');
+    }
+
+    const tracks = await searchTracksByArtist(artistName);
+    if (tracks.length === 0) {
+      return res.status(404).send('No tracks found for the specified artist');
+    }
+
+    // Process the first track (you can modify this to process multiple tracks)
+    const track = tracks[0];
+    const processedFilePath = await fetchAndProcessTrack(track.stream_url + '?client_id=' + SOUNDCLOUD_CLIENT_ID);
+
+    if (processedFilePath) {
+      res.download(processedFilePath, 'soundcloud_rip.mp3', (err) => {
+        if (err) {
+          console.error('Error downloading file:', err);
+        }
+      });
+    } else {
+      res.status(500).send('Error processing track');
+    }
+  } catch (error) {
+    console.error('Error in /rip endpoint:', error);
+    res.status(500).send('Internal Server Error');
+  }
+});
